@@ -1,7 +1,7 @@
-FAWN
+fawn
 ====
 
-FAWN aka Flask Async uWSGI WebSocket postgresql Notify is a Flask Extension allowing websocket uwsgi broadcasting from postgresql notify channels.
+fawn aka **f**lask **a**sync uwsgi **w**ebsocket postgresql **n**otify is a flask extension allowing websocket uwsgi broadcasting from postgresql notify channels.
 
 
 Requirements
@@ -56,6 +56,8 @@ Usage
         # All connected websockets to the ws endpoint can be notified with:
         fawn.notify(ws, 'From the class')
         fawn.notify('ws', 'From the endpoint')
+        # Can be used directly in sql with:
+        # => NOTIFY endpoint, 'payload'
 
         # A little js to show it on the page
         return """
@@ -78,15 +80,15 @@ This example can be run with:
 Author
 ------
 
-Florian Mounier
-Kozea
+Florian Mounier at Kozea
 
 
 License
 -------
 
+MIT
+
 ```
-The MIT License (MIT)
 Copyright (c) 2016 Florian Mounier <paradoxxx.zero@gmail.com>
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
