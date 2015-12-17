@@ -101,7 +101,6 @@ class FawnLoop(object):
         return True
 
     def db_read(self):
-        # log.info('db read')
         if self.connection.poll() == psycopg2.extensions.POLL_ERROR:
             return False
 
@@ -109,14 +108,12 @@ class FawnLoop(object):
             return True
 
         if not self.connection.notifies:
-            # log.info('db not notifies')
             for notification in FawnLoop.last_notifications:
                 if notification.channel == self.channel:
                     self.handler.notify(notification.payload)
             return True
 
         FawnLoop.last_notifications = []
-        # log.info('db notifies')
         while self.connection.notifies:
             notification = self.connection.notifies.pop(0)
             FawnLoop.last_notifications.append(notification)
