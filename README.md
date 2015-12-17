@@ -18,13 +18,19 @@ Usage
 
     from flask import Flask
     from fawn import Fawn
+    app = Flask(__name__)
 
-    # If your are using SQLAlchemy:
+    # If you are using Flask SQLAlchemy:
+    from flask_sqlalchemy import SQLAlchemy
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql+psycopg2://user@localhost/db'
+    db = SQLAlchemy(app)
+
+    # If you are using SQLAlchemy
     from sqlalchemy import create_engine
     engine = create_engine('postgresql+psycopg2://user@localhost/db', echo=True)
 
     def connection_factory():
-        connection = engine.connect()  # or db.engine.connect()
+        connection = db.engine.connect()  # or engine.connect() with sqlalchemy
         connection.detach()
         return connection.connection.connection
 
@@ -32,7 +38,6 @@ Usage
     # def connection_factory():
     #     return psycopg2.connect('dbname=db user=user')
 
-    app = Flask(__name__)
     fawn = Fawn(app, connection_factory)
 
     # You can now declare a websocket route:
@@ -54,8 +59,9 @@ Usage
     @app.route('/')
     def index():
         # All connected websockets to the ws endpoint can be notified with:
-        fawn.notify(ws, 'From the class')
-        fawn.notify('ws', 'From the endpoint')
+        db.session.execute(fawn.notify('ws', 'From the endpoint'))
+        db.session.commit()
+
         # Can be used directly in sql with:
         # => NOTIFY endpoint, 'payload'
 
@@ -65,7 +71,7 @@ Usage
             var s = new WebSocket("ws://" + location.host + "/ws/");
             s.onopen = e => document.write('opened')
             s.onmessage = e => document.write(e.data)
-            s.onerror = e => document.write(e)
+            s.onerror = e => document.write('Error')
             s.onclose = e => document.write('connection closed')
         </script>
         """
@@ -74,7 +80,7 @@ Usage
 This example can be run with:
 
 ```sh
-  uwsgi --master --http localhost:1231 --http-websockets --callable=app --wsgi-file little_flask_example.py --async 100 --ugreen --process 5
+  uwsgi --master --http localhost:1231 --http-websockets --callable=app --wsgi-file little_flask_example.py --async 100 --ugreen --processes 5
 ```
 
 Author

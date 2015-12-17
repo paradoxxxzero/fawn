@@ -23,6 +23,20 @@ import uwsgi
 import psycopg2
 from werkzeug.exceptions import HTTPException
 from werkzeug.routing import Map, Rule
+import logging
+import os
+
+log = logging.getLogger('fawn')
+
+if 'FAWN_DEBUG' in os.environ:
+    try:
+        from log_colorizer import basicConfig
+    except ImportError:
+        from logging import basicConfig
+    log.setLevel(int(os.getenv('FAWN_DEBUG')))
+    basicConfig()
+else:
+    log.setLevel(logging.WARNING)
 
 
 class WebSocket(object):
@@ -43,33 +57,40 @@ class WebSocket(object):
 
 
 class FawnLoop(object):
-    def __init__(self, db, handler, channel):
+    connection = None
+    last_notifications = []
+
+    def __init__(self,  handler, channel):
         self.websocket_fd = uwsgi.connection_fd()
-        self.db = db
         self.handler = handler
-        curs = self.db.cursor()
-        curs.execute("LISTEN %s;COMMIT;" % channel)
-        self.db_fd = self.db.fileno()
+        self.db_fd = os.dup(self.connection.fileno())
+        log.info('Listening for %s on fd %s' % (channel, self.db_fd))
+        self.channel = channel
         self.handler.open()
 
     def wait(self):
+        log.debug('Waiting on fd %s, %s' % (self.websocket_fd, self.db_fd))
         uwsgi.wait_fd_read(self.websocket_fd, 3)
-        uwsgi.wait_fd_read(self.db_fd)
+        uwsgi.wait_fd_read(self.db_fd, 5)
         uwsgi.suspend()
         fd = uwsgi.ready_fd()
         if fd == self.websocket_fd:
             return 'websocket'
         if fd == self.db_fd:
             return 'db'
+        log.debug('Timeout %d' % fd)
         # Try ping / ponging the websocket in case of error
-        return 'websocket'
+        return 'timeout'
 
     def _loop(self):
-        if self.wait() == 'websocket':
+        wait = self.wait()
+        if wait == 'websocket' or wait == 'timeout':
             return self.websocket_read()
-        return self.db_read()
+        if wait == 'db' or wait == 'timeout':
+            return self.db_read()
 
     def websocket_read(self):
+        log.debug('Websocket read')
         try:
             msg = uwsgi.websocket_recv_nb()
         except Exception as e:
@@ -80,13 +101,28 @@ class FawnLoop(object):
         return True
 
     def db_read(self):
-        if self.db.poll() != psycopg2.extensions.POLL_OK:
-            return True  # Should crash ?
+        # log.info('db read')
+        if self.connection.poll() == psycopg2.extensions.POLL_ERROR:
+            return False
 
-        if not self.db.notifies:
+        if self.connection.poll() != psycopg2.extensions.POLL_OK:
             return True
 
-        self.handler.notify(self.db.notifies.pop())
+        if not self.connection.notifies:
+            # log.info('db not notifies')
+            for notification in FawnLoop.last_notifications:
+                if notification.channel == self.channel:
+                    self.handler.notify(notification.payload)
+            return True
+
+        FawnLoop.last_notifications = []
+        # log.info('db notifies')
+        while self.connection.notifies:
+            notification = self.connection.notifies.pop(0)
+            FawnLoop.last_notifications.append(notification)
+            if notification.channel == self.channel:
+                self.handler.notify(notification.payload)
+
         return True
 
     def loop(self):
@@ -117,8 +153,24 @@ class FawnMiddleware(object):
         uwsgi.websocket_handshake(
             environ['HTTP_SEC_WEBSOCKET_KEY'],
             environ.get('HTTP_ORIGIN', ''))
-        db = self.fawn.connection_factory()
-        FawnLoop(db, handler, endpoint).loop()
+
+        # One connection per loop (per process)
+        if FawnLoop.connection is None:
+            log.info('New connection for worker %s' % uwsgi.worker_id())
+            FawnLoop.connection = self.fawn.connection_factory()
+            # Ensure autocommit
+            FawnLoop.connection.set_isolation_level(
+                psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
+            cursor = FawnLoop.connection.cursor()
+
+            for endpoint in self.fawn.view_functions.keys():
+                cursor.execute('LISTEN %s;' % endpoint)
+        else:
+            log.info(
+                'Already existing connection for worker %s' %
+                uwsgi.worker_id())
+
+        FawnLoop(handler, endpoint).loop()
         return []
 
 
@@ -126,24 +178,22 @@ class Fawn(object):
     def __init__(self, app, connection_factory):
         app.wsgi_app = FawnMiddleware(app.wsgi_app, self)
         self.app = app
-        self.connection_factory = connection_factory
         self.url_map = Map()
         self.routes = {}
         self.view_functions = {}
         self.WebSocket = WebSocket
+        self.connection_factory = connection_factory
 
     def notify(self, endpoint_or_route, payload=''):
         if hasattr(endpoint_or_route, '__name__'):
             endpoint_or_route = endpoint_or_route.__name__
-        notify = 'NOTIFY %s' % endpoint_or_route
         if payload:
             payload = payload.replace("'", '"')
-            notify += ", '%s'" % payload
-        notify += ';COMMIT;'
+            payload = ", '%s'" % payload
+        else:
+            payload = ''
 
-        cursor = self.connection_factory().cursor()
-        cursor.execute(notify)
-        cursor.close()
+        return 'NOTIFY %s%s;' % (endpoint_or_route, payload)
 
     def route(self, rule, **options):
         def decorator(f):
