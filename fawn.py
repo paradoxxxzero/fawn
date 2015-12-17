@@ -64,12 +64,10 @@ class FawnLoop(object):
         self.websocket_fd = uwsgi.connection_fd()
         self.handler = handler
         self.db_fd = os.dup(self.connection.fileno())
-        log.info('Listening for %s on fd %s' % (channel, self.db_fd))
         self.channel = channel
         self.handler.open()
 
     def wait(self):
-        log.debug('Waiting on fd %s, %s' % (self.websocket_fd, self.db_fd))
         uwsgi.wait_fd_read(self.websocket_fd, 3)
         uwsgi.wait_fd_read(self.db_fd, 5)
         uwsgi.suspend()
@@ -78,7 +76,6 @@ class FawnLoop(object):
             return 'websocket'
         if fd == self.db_fd:
             return 'db'
-        log.debug('Timeout %d' % fd)
         # Try ping / ponging the websocket in case of error
         return 'timeout'
 
@@ -90,7 +87,6 @@ class FawnLoop(object):
             return self.db_read()
 
     def websocket_read(self):
-        log.debug('Websocket read')
         try:
             msg = uwsgi.websocket_recv_nb()
         except Exception as e:
@@ -106,20 +102,17 @@ class FawnLoop(object):
 
         if self.connection.poll() != psycopg2.extensions.POLL_OK:
             return True
-
         if not self.connection.notifies:
             for notification in FawnLoop.last_notifications:
                 if notification.channel == self.channel:
                     self.handler.notify(notification.payload)
             return True
-
         FawnLoop.last_notifications = []
         while self.connection.notifies:
             notification = self.connection.notifies.pop(0)
             FawnLoop.last_notifications.append(notification)
             if notification.channel == self.channel:
                 self.handler.notify(notification.payload)
-
         return True
 
     def loop(self):
@@ -153,19 +146,14 @@ class FawnMiddleware(object):
 
         # One connection per loop (per process)
         if FawnLoop.connection is None:
-            log.info('New connection for worker %s' % uwsgi.worker_id())
             FawnLoop.connection = self.fawn.connection_factory()
             # Ensure autocommit
             FawnLoop.connection.set_isolation_level(
                 psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
             cursor = FawnLoop.connection.cursor()
 
-            for endpoint in self.fawn.view_functions.keys():
-                cursor.execute('LISTEN %s;' % endpoint)
-        else:
-            log.info(
-                'Already existing connection for worker %s' %
-                uwsgi.worker_id())
+            for channel in self.fawn.view_functions.keys():
+                cursor.execute('LISTEN %s;' % channel)
 
         FawnLoop(handler, endpoint).loop()
         return []
