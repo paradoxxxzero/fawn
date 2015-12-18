@@ -90,6 +90,7 @@ class FawnLoop(object):
         try:
             msg = uwsgi.websocket_recv_nb()
         except Exception as e:
+            log.warning('Error in websocket recv', exc_info=True)
             self.handler.close(e)
             return False
         if msg:
@@ -97,16 +98,29 @@ class FawnLoop(object):
         return True
 
     def db_read(self):
-        if self.connection.poll() == psycopg2.extensions.POLL_ERROR:
+        if self.connection is None:
+            # Db connection was broken
             return False
 
-        if self.connection.poll() != psycopg2.extensions.POLL_OK:
+        try:
+            poll = self.connection.poll()
+        except Exception:
+            log.warning('Error in db poll', exc_info=True)
+            FawnLoop.connection = None
+            return False
+
+        if poll == psycopg2.extensions.POLL_ERROR:
+            return False
+
+        if poll != psycopg2.extensions.POLL_OK:
             return True
+
         if not self.connection.notifies:
             for notification in FawnLoop.last_notifications:
                 if notification.channel == self.channel:
                     self.handler.notify(notification.payload)
             return True
+
         FawnLoop.last_notifications = []
         while self.connection.notifies:
             notification = self.connection.notifies.pop(0)
@@ -116,8 +130,18 @@ class FawnLoop(object):
         return True
 
     def loop(self):
-        while self._loop():
-            pass
+        try:
+            while self._loop():
+                pass
+        finally:
+            try:
+                os.close(self.db_fd)
+            except Exception:
+                pass
+            try:
+                os.close(self.websocket_fd)
+            except Exception:
+                pass
 
 
 class FawnMiddleware(object):
@@ -146,17 +170,25 @@ class FawnMiddleware(object):
 
         # One connection per loop (per process)
         if FawnLoop.connection is None:
-            FawnLoop.connection = self.fawn.connection_factory()
-            # Ensure autocommit
-            FawnLoop.connection.set_isolation_level(
-                psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
-            cursor = FawnLoop.connection.cursor()
-
-            for channel in self.fawn.view_functions.keys():
-                cursor.execute('LISTEN %s;' % channel)
+            try:
+                self.get_db_connection()
+            except Exception:
+                log.warning('Error getting db connection', exc_info=True)
+                return []
 
         FawnLoop(handler, endpoint).loop()
         return []
+
+    def get_db_connection(self):
+        FawnLoop.connection = self.fawn.connection_factory()
+
+        # Ensure autocommit
+        FawnLoop.connection.set_isolation_level(
+            psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
+        cursor = FawnLoop.connection.cursor()
+
+        for channel in self.fawn.view_functions.keys():
+            cursor.execute('LISTEN %s;' % channel)
 
 
 class Fawn(object):

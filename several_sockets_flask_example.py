@@ -29,10 +29,10 @@ def index():
         var sockets = [];
         function handle_socket(i) {
             var s = new WebSocket("ws://" + location.host + "/ws/" + i);
-            s.onopen = e => document.body.innerHTML += 'Socket ' + i + ' opened <br>'
-            s.onmessage = e => document.body.innerHTML += e.data + ' (' + i + ')<br>'
+            s.onopen = e => document.body.innerHTML += i + ' opened '
+            s.onmessage = e => document.body.innerHTML += e.data + ' (' + i + ') '
             s.onerror = e => document.body.innerHTML += 'Error (' + i + ')<br>'
-            s.onclose = e => document.body.innerHTML += 'connection closed (' + i + ')<br>'
+            s.onclose = e => document.body.innerHTML += 'Socket closed (' + i + ')<br>'
             return i;
         }
         document.addEventListener('DOMContentLoaded', function () {
@@ -46,11 +46,26 @@ def index():
     """ % uwsgi.worker_id()
 
 
+@app.route('/iframes/<int:n>')
+def iframes(n):
+    return """
+        <style>
+           body {
+                display: flex;
+                flex-wrap: wrap;
+           }
+           iframe {
+                flex: 1;
+           }
+       </style>
+    """ + ' '.join(['<iframe src="/" ></iframe>'] * n)
+
+
 @app.route('/notify')
 def notify():
-    message = '%%d This is a notification from worker %d' % uwsgi.worker_id()
+    message = '%%d (w%d)' % uwsgi.worker_id()
     for i in range(10):
-        db.session.execute(fawn.notify('socket%d' % i, message % i))
+        db.session.execute(fawn.notify('s%d' % i, message % i))
     db.session.commit()
     return 'OK'
 
@@ -58,10 +73,10 @@ for i in range(10):
 
     def notify_(self, payload):
         self.send(
-            'Notification "%s" received in worker %d in ws' % (
+            '"%s" recv (w%d)' % (
                 payload, uwsgi.worker_id()))
     dct = {
         'notify': notify_
     }
-    ws = type('socket%d' % i, (fawn.WebSocket, ), dct)
+    ws = type('s%d' % i, (fawn.WebSocket, ), dct)
     fawn.route('/ws/%d' % i)(ws)
