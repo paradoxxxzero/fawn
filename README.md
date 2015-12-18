@@ -26,13 +26,13 @@ Usage
     db = SQLAlchemy(app)
 
     # If you are using SQLAlchemy
-    from sqlalchemy import create_engine
-    engine = create_engine('postgresql+psycopg2://user@localhost/db', echo=True)
+    # from sqlalchemy import create_engine
+    # engine = create_engine('postgresql+psycopg2://user@localhost/db', echo=True)
 
     def connection_factory():
         connection = db.engine.connect()  # or engine.connect() with sqlalchemy
         connection.detach()
-        return connection.connection.connection
+        return connection.connection.connection  # oh yeah
 
     # If your are using directly psycopg2
     # def connection_factory():
