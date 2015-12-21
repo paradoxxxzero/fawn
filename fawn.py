@@ -18,15 +18,23 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-
-import uwsgi
+import os
+import logging
 import psycopg2
+
+from contextlib import contextmanager
+from flask import url_for
+from flask.globals import _request_ctx_stack, _app_ctx_stack
 from werkzeug.exceptions import HTTPException
 from werkzeug.routing import Map, Rule
-import logging
-import os
 
 log = logging.getLogger('fawn')
+
+try:
+    import uwsgi
+except ImportError:
+    log.warning("Can't import uwsgi. Fawn will not work")
+    uwsgi = None
 
 if 'FAWN_DEBUG' in os.environ:
     try:
@@ -39,7 +47,25 @@ else:
     log.setLevel(logging.WARNING)
 
 
+@contextmanager
+def swap(base, property, new_property):
+    old_property = getattr(base, property)
+    setattr(base, property, new_property)
+    try:
+        yield
+    finally:
+        setattr(base, property, old_property)
+
+
 class WebSocket(object):
+    def __init__(self, app, environ):
+        self.app = app
+        self.environ = environ
+
+    @property
+    def _request_context(self):
+        return self.app.request_context(self.environ)
+
     def open(self):
         pass
 
@@ -65,7 +91,8 @@ class FawnLoop(object):
         self.handler = handler
         self.db_fd = os.dup(self.connection.fileno())
         self.channel = channel
-        self.handler.open()
+        with self.handler._request_context:
+            self.handler.open()
 
     def wait(self):
         uwsgi.wait_fd_read(self.websocket_fd, 3)
@@ -91,10 +118,12 @@ class FawnLoop(object):
             msg = uwsgi.websocket_recv_nb()
         except Exception as e:
             log.warning('Error in websocket recv', exc_info=True)
-            self.handler.close(e)
+            with self.handler._request_context:
+                self.handler.close(e)
             return False
         if msg:
-            self.handler.message(msg)
+            with self.handler._request_context:
+                self.handler.message(msg)
         return True
 
     def db_read(self):
@@ -118,7 +147,8 @@ class FawnLoop(object):
         if not self.connection.notifies:
             for notification in FawnLoop.last_notifications:
                 if notification.channel == self.channel:
-                    self.handler.notify(notification.payload)
+                    with self.handler._request_context:
+                        self.handler.notify(notification.payload)
             return True
 
         FawnLoop.last_notifications = []
@@ -126,7 +156,8 @@ class FawnLoop(object):
             notification = self.connection.notifies.pop(0)
             FawnLoop.last_notifications.append(notification)
             if notification.channel == self.channel:
-                self.handler.notify(notification.payload)
+                with self.handler._request_context:
+                    self.handler.notify(notification.payload)
         return True
 
     def loop(self):
@@ -157,11 +188,18 @@ class FawnMiddleware(object):
         urls = self.fawn.url_map.bind_to_environ(environ)
         try:
             endpoint, args = urls.match()
-            handler = self.fawn.view_functions[endpoint]()
+            handler = self.fawn.view_functions[endpoint](self.fawn.app, environ)
         except HTTPException:
             handler = None
 
         if not handler or 'HTTP_SEC_WEBSOCKET_KEY' not in environ:
+            return self.wsgi_app(environ, start_response)
+
+        if uwsgi is None:
+            criticality = log.info if self.fawn.app.debug else log.error
+            criticality('The server is not run with uwsgi. '
+                        'Websocket will not work.')
+
             return self.wsgi_app(environ, start_response)
 
         uwsgi.websocket_handshake(
@@ -192,7 +230,7 @@ class FawnMiddleware(object):
 
 
 class Fawn(object):
-    def __init__(self, connection_factory, app=None):
+    def __init__(self, connection_factory, app=None, custom_url_for=None):
         self.url_map = Map()
         self.routes = {}
         self.view_functions = {}
@@ -200,6 +238,10 @@ class Fawn(object):
         self.connection_factory = connection_factory
         if app is not None:
             self.init_app(app)
+        if custom_url_for is not None:
+            self.flask_url_for = custom_url_for
+        else:
+            self.flask_url_for = url_for
 
     def init_app(self, app):
         app.wsgi_app = FawnMiddleware(app.wsgi_app, self)
@@ -215,6 +257,33 @@ class Fawn(object):
             payload = ''
 
         return 'NOTIFY %s%s;' % (endpoint_or_route, payload)
+
+    def url_for(self, ep, **values):
+        if self.app.config.get('PREFERRED_URL_SCHEME') == 'https':
+            scheme = 'wss'
+        else:
+            scheme = 'ws'
+        values['_external'] = True
+        values['_scheme'] = scheme
+
+        appctx = _app_ctx_stack.top
+        reqctx = _request_ctx_stack.top
+
+        if reqctx is not None:
+            url_adapter = self.url_map.bind_to_environ(
+                reqctx.request.environ,
+                server_name=self.app.config['SERVER_NAME'])
+
+            with swap(reqctx, 'url_adapter', url_adapter):
+                return self.flask_url_for(ep, **values)
+
+        url_adapter = self.url_map.bind(
+            self.app.config['SERVER_NAME'],
+            script_name=self.app.config['APPLICATION_ROOT'] or '/',
+            url_scheme=self.app.config['PREFERRED_URL_SCHEME'])
+
+        with swap(appctx, 'url_adapter', url_adapter):
+            return self.flask_url_for(ep, **values)
 
     def route(self, rule, **options):
         def decorator(f):
