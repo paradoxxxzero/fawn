@@ -7,16 +7,17 @@ from fawn import Fawn
 
 app = Flask(__name__)
 app.debug = True
-
 app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql+psycopg2://user@localhost/db'
 db = SQLAlchemy(app)
+
 
 def connection_factory():
     connection = db.engine.connect()
     connection.detach()
     return connection.connection.connection
 
-fawn = Fawn(app, connection_factory)
+fawn = Fawn(connection_factory, app)
+
 
 @app.route('/')
 def index():

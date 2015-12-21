@@ -1,17 +1,10 @@
 # Run with uwsgi --ini little_flask_example.ini
-
+import uwsgi
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
-import uwsgi
-
 from fawn import Fawn
 
-app = Flask(__name__)
-app.debug = True
-
-app.config[
-    'SQLALCHEMY_DATABASE_URI'] = 'postgresql+psycopg2://user@localhost/db'
-db = SQLAlchemy(app)
+db = SQLAlchemy()
 
 
 def connection_factory():
@@ -19,7 +12,17 @@ def connection_factory():
     connection.detach()
     return connection.connection.connection
 
-fawn = Fawn(app, connection_factory)
+fawn = Fawn(connection_factory)
+
+app = Flask(__name__)
+app.debug = True
+
+app.config[
+    'SQLALCHEMY_DATABASE_URI'] = 'postgresql+psycopg2://user@localhost/db'
+
+db.app = app
+db.init_app(app)
+fawn.init_app(app)
 
 
 @app.route('/')

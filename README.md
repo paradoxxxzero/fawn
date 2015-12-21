@@ -38,7 +38,7 @@ Usage
     # def connection_factory():
     #     return psycopg2.connect('dbname=db user=user')
 
-    fawn = Fawn(app, connection_factory)
+    fawn = Fawn(connection_factory, app)
 
     # You can now declare a websocket route:
     @fawn.route('/ws/')

@@ -192,14 +192,18 @@ class FawnMiddleware(object):
 
 
 class Fawn(object):
-    def __init__(self, app, connection_factory):
-        app.wsgi_app = FawnMiddleware(app.wsgi_app, self)
-        self.app = app
+    def __init__(self, connection_factory, app=None):
         self.url_map = Map()
         self.routes = {}
         self.view_functions = {}
         self.WebSocket = WebSocket
         self.connection_factory = connection_factory
+        if app is not None:
+            self.init_app(app)
+
+    def init_app(self, app):
+        app.wsgi_app = FawnMiddleware(app.wsgi_app, self)
+        self.app = app
 
     def notify(self, endpoint_or_route, payload=''):
         if hasattr(endpoint_or_route, '__name__'):
