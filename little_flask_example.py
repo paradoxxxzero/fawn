@@ -2,7 +2,6 @@
 
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
-
 from fawn import Fawn
 
 app = Flask(__name__)

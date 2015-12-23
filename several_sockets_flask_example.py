@@ -1,6 +1,7 @@
 # Run with uwsgi --ini little_flask_example.ini
 import uwsgi
-from flask import Flask, request
+import random
+from flask import Flask, request, g, _app_ctx_stack
 from flask_sqlalchemy import SQLAlchemy
 from fawn import Fawn
 
@@ -23,6 +24,12 @@ app.config[
 db.app = app
 db.init_app(app)
 
+
+@app.before_request
+def before_request():
+    r = random.randint(0, 1000)
+    print('Creating %s' % r)
+    g.rnd = r
 
 @app.route('/')
 def index():
@@ -71,12 +78,15 @@ def notify():
     return 'OK'
 
 for i in range(10):
+    def open_(self):
+        print('Opening request %s' % g.rnd)
 
     def notify_(self, payload):
         self.send(
-            '"%s" recv (w%d) %s' % (
-                payload, uwsgi.worker_id(), request.path))
+            '"%s" recv (w%d) %s %d' % (
+                payload, uwsgi.worker_id(), request.path, g.rnd))
     dct = {
+        'open': open_,
         'notify': notify_
     }
     ws = type('s%d' % i, (fawn.WebSocket, ), dct)

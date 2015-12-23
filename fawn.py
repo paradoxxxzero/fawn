@@ -23,7 +23,8 @@ import logging
 import psycopg2
 
 from flask import (
-    current_app, url_for, request, abort, Response, _request_ctx_stack)
+    current_app, url_for, request, abort, Response,
+    _app_ctx_stack, _request_ctx_stack)
 
 log = logging.getLogger('fawn')
 
@@ -59,6 +60,20 @@ class WebSocket(object):
 
     def close(self, reason):
         pass
+
+    def _pop_context(self):
+        if self.app_context not in (
+                self.request_context._implicit_app_ctx_stack):
+            self.app_context.pop()
+
+        # No app_context pop here since request context pop his app context
+        self.request_context.pop()
+
+    def _push_context(self):
+        # Pushing the app first to avoid the request context creating
+        # a new app context
+        self.app_context.push()
+        self.request_context.push()
 
 
 class FawnLoop(object):
@@ -108,12 +123,12 @@ class FawnLoop(object):
     def wait(self):
         # Remove context as we are switching between green thread
         # (and therefore websocket request)
-        self.ws.request_context.pop()
+        self.ws._pop_context()
         uwsgi.wait_fd_read(self.websocket_fd, 3)
         uwsgi.wait_fd_read(self.db_fd, 5)
         uwsgi.suspend()
         # Restoring request context for all other operations
-        self.ws.request_context.push()
+        self.ws._push_context()
         fd = uwsgi.ready_fd()
         if fd == self.websocket_fd:
             return 'websocket'
@@ -222,9 +237,11 @@ class Fawn(object):
                 request.headers.get('Origin', ''))
 
             ws.request_context = _request_ctx_stack.top
+            ws.app_context = _app_ctx_stack.top
             ws.open(*args, **kwargs)
             loop.loop()
-
+            # Putting app context into implicit again to force app context pop
+            ws.request_context._implicit_app_ctx_stack.append(ws.app_context)
             # Don't respond here (already done during handshake)
             return VoidResponse('')
 
@@ -254,4 +271,15 @@ class Fawn(object):
         values['_external'] = True
         values['_scheme'] = scheme
 
-        return self._url_for(endpoint, **values)
+        # Flask Issue #1663 https://github.com/mitsuhiko/flask/issues/1663
+        appctx = _app_ctx_stack.top
+        reqctx = _request_ctx_stack.top
+        if reqctx is not None:
+            url_adapter = reqctx.url_adapter
+        else:
+            url_adapter = appctx.url_adapter
+
+        scheme = url_adapter.url_scheme
+        rv = self._url_for(endpoint, **values)
+        url_adapter.url_scheme = scheme
+        return rv
