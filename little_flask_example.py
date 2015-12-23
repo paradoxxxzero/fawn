@@ -16,7 +16,7 @@ def connection_factory():
     connection.detach()
     return connection.connection.connection
 
-fawn = Fawn(connection_factory, app)
+fawn = Fawn(connection_factory)
 
 
 @app.route('/')
@@ -28,7 +28,7 @@ def index():
 
     return """
     <script>
-        var s = new WebSocket("ws://" + location.host + "/ws/");
+        var s = new WebSocket("ws://" + location.host + "/ws/" + (Math.random() * 1000 << 1));
         s.onopen = e => document.body.innerHTML += 'Socket opened' + '<br>'
         s.onmessage = e => document.body.innerHTML += e.data + '<br>'
         s.onerror = e => document.body.innerHTML += 'Error <br>'
@@ -38,18 +38,19 @@ def index():
     """ % uwsgi.worker_id()
 
 
-@fawn.route('/ws/')
+@app.route('/ws/<int:rand>')
+@fawn.websocket
 class ws(fawn.WebSocket):
-    def open(self):
-        pass
+    def open(self, rand):
+        self.rand = rand
 
     def message(self, message):
         pass
 
     def notify(self, payload):
         import uwsgi
-        self.send('Notification "%s" received in worker %d in ws' % (
-            payload, uwsgi.worker_id()))
+        self.send('Notification "%s" received in worker %d in ws %s' % (
+            payload, uwsgi.worker_id(), self.rand))
 
     def close(self, reason):
         pass

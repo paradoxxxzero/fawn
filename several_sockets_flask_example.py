@@ -1,6 +1,6 @@
 # Run with uwsgi --ini little_flask_example.ini
 import uwsgi
-from flask import Flask
+from flask import Flask, request
 from flask_sqlalchemy import SQLAlchemy
 from fawn import Fawn
 
@@ -22,7 +22,6 @@ app.config[
 
 db.app = app
 db.init_app(app)
-fawn.init_app(app)
 
 
 @app.route('/')
@@ -32,18 +31,17 @@ def index():
         var sockets = [];
         function handle_socket(i) {
             var s = new WebSocket("ws://" + location.host + "/ws/" + i);
-            s.onopen = e => document.body.innerHTML += i + ' opened '
-            s.onmessage = e => document.body.innerHTML += e.data + ' (' + i + ') '
+            s.onopen = e => document.body.innerHTML += i + ' opened  <br>'
+            s.onmessage = e => document.body.innerHTML += e.data + ' (' + i + ') <br>'
             s.onerror = e => document.body.innerHTML += 'Error (' + i + ')<br>'
             s.onclose = e => document.body.innerHTML += 'Socket closed (' + i + ')<br>'
-            return i;
+            return s;
         }
         document.addEventListener('DOMContentLoaded', function () {
             for (var i = 0; i < 10; i++) {
                 sockets.push(handle_socket(i))
             }
         });
-
     </script>
     Page rendered on worker %d <br>
     """ % uwsgi.worker_id()
@@ -76,10 +74,10 @@ for i in range(10):
 
     def notify_(self, payload):
         self.send(
-            '"%s" recv (w%d)' % (
-                payload, uwsgi.worker_id()))
+            '"%s" recv (w%d) %s' % (
+                payload, uwsgi.worker_id(), request.path))
     dct = {
         'notify': notify_
     }
     ws = type('s%d' % i, (fawn.WebSocket, ), dct)
-    fawn.route('/ws/%d' % i)(ws)
+    app.route('/ws/%d' % i)(fawn.websocket(ws))
