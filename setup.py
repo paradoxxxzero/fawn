@@ -9,7 +9,7 @@ allowing websocket uwsgi broadcasting from postgresql notify channels.
 
 from setuptools import setup
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 
 options = dict(
     name="fawn",

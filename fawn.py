@@ -113,6 +113,8 @@ class FawnLoop(object):
             cls.last_notifications.append(notification)
 
     def __init__(self,  ws, channel, fawn):
+        if uwsgi is None:
+            abort(412)
         self.websocket_fd = uwsgi.connection_fd()
         self.fawn = fawn
         self.ws = ws
