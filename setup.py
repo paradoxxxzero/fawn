@@ -9,7 +9,7 @@ allowing websocket uwsgi broadcasting from postgresql notify channels.
 
 from setuptools import setup
 
-VERSION = "2.1.0"
+VERSION = "2.1.1"
 
 options = dict(
     name="fawn",
@@ -22,7 +22,8 @@ options = dict(
     platforms="Any",
     py_modules=['fawn'],
     provides=['fawn'],
-    install_requires=['flask', 'uwsgi', 'sqlalchemy', 'psycopg2'],
+    # 'uwsgi' is required
+    install_requires=['flask', 'sqlalchemy', 'psycopg2'],
     keywords=['flask', 'async', 'uwsgi', 'websocket', 'postgresql', 'notify'],
     url='https://github.com/paradoxxxzero/fawn',
     classifiers=[
